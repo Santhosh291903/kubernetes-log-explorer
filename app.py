@@ -5,29 +5,25 @@ import os
 
 app = Flask(__name__)
 
-# Initialize Kubernetes client
-def init_kubernetes():
-    kubeconfig_path = "/path/path/.kube/config"
-    if not os.path.exists(kubeconfig_path):
-        raise FileNotFoundError(f"Kubeconfig file not found at {kubeconfig_path}")
-    config.load_kube_config(config_file=kubeconfig_path)
-    return client.CoreV1Api()
+# Configure Kubernetes client
+try:
+    config.load_incluster_config()  # For running in-cluster
+except config.ConfigException:
+    try:
+        config.load_kube_config()  # For local development
+    except config.ConfigException:
+        raise Exception("Could not configure Kubernetes python client")
 
-v1 = init_kubernetes()
+v1 = client.CoreV1Api()
 
 @app.route('/')
 def index():
-    """Main page with dropdown selectors"""
     try:
-        # Get cluster contexts
         contexts, active_context = config.list_kube_config_contexts()
-        
-        # Get namespaces
         namespaces = v1.list_namespace()
         namespace_list = [ns.metadata.name for ns in namespaces.items]
         
-        return render_template('index.html', 
-                            contexts=contexts,
+        return render_template('index.html',
                             current_context=active_context['name'],
                             namespaces=namespace_list)
     except Exception as e:
@@ -35,7 +31,6 @@ def index():
 
 @app.route('/get_pods', methods=['POST'])
 def get_pods():
-    """Get pods for selected namespace"""
     try:
         namespace = request.form['namespace']
         pods = v1.list_namespaced_pod(namespace=namespace)
@@ -46,7 +41,6 @@ def get_pods():
 
 @app.route('/get_logs', methods=['POST'])
 def get_logs():
-    """Get logs for selected pod"""
     try:
         namespace = request.form['namespace']
         pod_name = request.form['pod_name']
@@ -67,11 +61,10 @@ def get_logs():
     except ApiException as e:
         return jsonify({'error': str(e)}), 500
 
-if __name__ == '__main__':
-    # Create templates directory if it doesn't exist
+def create_templates():
     os.makedirs('templates', exist_ok=True)
     
-    # Create HTML templates with larger log output box
+    # index.html
     with open('templates/index.html', 'w') as f:
         f.write('''<!DOCTYPE html>
 <html>
@@ -79,58 +72,27 @@ if __name__ == '__main__':
     <title>Kubernetes Log Viewer</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body {
-            background-color: #f5f5f5;
-            padding: 20px;
-        }
+        body { background-color: #f5f5f5; padding: 20px; }
         .log-container {
-            background-color: #1e1e1e;
-            color: #e0e0e0;
-            border: 1px solid #444;
-            border-radius: 5px;
-            padding: 15px;
-            font-family: 'Courier New', monospace;
-            white-space: pre-wrap;
-            height: 70vh;
-            overflow-y: auto;
-            margin-top: 20px;
-            font-size: 14px;
-            line-height: 1.5;
+            background-color: #1e1e1e; color: #e0e0e0; border: 1px solid #444;
+            border-radius: 5px; padding: 15px; font-family: 'Courier New', monospace;
+            white-space: pre-wrap; height: 70vh; overflow-y: auto; margin-top: 20px;
+            font-size: 14px; line-height: 1.5;
         }
         .form-container {
-            background-color: #fff;
-            border-radius: 5px;
-            padding: 20px;
-            box-shadow: 0 0 15px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
+            background-color: #fff; border-radius: 5px; padding: 20px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.1); margin-bottom: 20px;
         }
-        .log-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-        .log-title {
-            font-weight: bold;
-            color: #333;
-        }
-        .log-info {
-            color: #666;
-            font-size: 0.9em;
-        }
-        .form-label {
-            font-weight: 500;
-        }
-        .btn-primary {
-            background-color: #0d6efd;
-            border-color: #0d6efd;
-        }
+        .log-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .log-title { font-weight: bold; color: #333; }
+        .log-info { color: #666; font-size: 0.9em; }
+        .form-label { font-weight: 500; }
+        .btn-refresh { margin-left: 10px; }
     </style>
 </head>
 <body>
     <div class="container-fluid">
         <h1 class="mb-4">Kubernetes Log Viewer</h1>
-        
         <div class="row">
             <div class="col-md-4">
                 <div class="form-container">
@@ -141,7 +103,6 @@ if __name__ == '__main__':
                                 <option>{{ current_context }}</option>
                             </select>
                         </div>
-                        
                         <div class="mb-3">
                             <label for="namespace" class="form-label">Namespace</label>
                             <select class="form-select" id="namespace" required>
@@ -150,14 +111,12 @@ if __name__ == '__main__':
                                 {% endfor %}
                             </select>
                         </div>
-                        
                         <div class="mb-3">
                             <label for="pod" class="form-label">Pod</label>
                             <select class="form-select" id="pod" required disabled>
                                 <option value="">Select a namespace first</option>
                             </select>
                         </div>
-                        
                         <div class="mb-3">
                             <label for="tail_lines" class="form-label">Log Lines to Show</label>
                             <select class="form-select" id="tail_lines">
@@ -169,15 +128,21 @@ if __name__ == '__main__':
                                 <option value="1000">1000 lines</option>
                             </select>
                         </div>
-                        
                         <button type="submit" class="btn btn-primary w-100">Get Logs</button>
                     </form>
                 </div>
             </div>
-            
             <div class="col-md-8">
                 <div class="log-header">
-                    <span class="log-title">Log Output</span>
+                    <div>
+                        <span class="log-title">Log Output</span>
+                        <button id="refreshBtn" class="btn btn-sm btn-secondary btn-refresh" disabled>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-clockwise" viewBox="0 0 16 16">
+                                <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+                                <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+                            </svg>
+                        </button>
+                    </div>
                     <span class="log-info" id="logInfo"></span>
                 </div>
                 <div class="log-container" id="logOutput">
@@ -186,16 +151,17 @@ if __name__ == '__main__':
             </div>
         </div>
     </div>
-
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script>
         $(document).ready(function() {
-            // Load pods when namespace changes
+            let currentPod = null;
+            let currentNamespace = null;
+            let currentTailLines = null;
+            
             $('#namespace').change(function() {
                 const namespace = $(this).val();
                 if (namespace) {
                     $('#pod').prop('disabled', true).html('<option value="">Loading pods...</option>');
-                    
                     $.post('/get_pods', {namespace: namespace}, function(data) {
                         if (data.error) {
                             $('#pod').html(`<option value="">Error: ${data.error}</option>`);
@@ -212,44 +178,52 @@ if __name__ == '__main__':
                 }
             });
             
-            // Get logs when form is submitted
-            $('#logForm').submit(function(e) {
-                e.preventDefault();
-                const namespace = $('#namespace').val();
-                const pod = $('#pod').val();
-                const tail_lines = $('#tail_lines').val();
-                
-                if (!namespace || !pod) return;
-                
+            function fetchLogs() {
+                if (!currentNamespace || !currentPod) return;
                 $('#logOutput').html('<div class="text-center py-5">Loading logs...</div>');
                 $('#logInfo').text('');
-                
                 $.post('/get_logs', {
-                    namespace: namespace,
-                    pod_name: pod,
-                    tail_lines: tail_lines
+                    namespace: currentNamespace,
+                    pod_name: currentPod,
+                    tail_lines: currentTailLines
                 }, function(data) {
                     if (data.error) {
                         $('#logOutput').html(`<div class="text-danger">Error: ${data.error}</div>`);
+                        $('#refreshBtn').prop('disabled', true);
                     } else {
                         $('#logOutput').text(data.logs);
                         $('#logInfo').text(`Showing last ${data.tail_lines} lines from ${data.namespace}/${data.pod}`);
-                        // Auto-scroll to bottom
-                        const logOutput = document.getElementById('logOutput');
-                        logOutput.scrollTop = logOutput.scrollHeight;
+                        document.getElementById('logOutput').scrollTop = document.getElementById('logOutput').scrollHeight;
+                        $('#refreshBtn').prop('disabled', false);
                     }
                 }).fail(function() {
                     $('#logOutput').html('<div class="text-danger">Error fetching logs</div>');
+                    $('#refreshBtn').prop('disabled', true);
                 });
+            }
+            
+            $('#logForm').submit(function(e) {
+                e.preventDefault();
+                currentNamespace = $('#namespace').val();
+                currentPod = $('#pod').val();
+                currentTailLines = $('#tail_lines').val();
+                if (!currentNamespace || !currentPod) return;
+                fetchLogs();
             });
             
-            // Trigger namespace change on page load
+            $('#refreshBtn').click(function() {
+                if (currentNamespace && currentPod) {
+                    fetchLogs();
+                }
+            });
+            
             $('#namespace').trigger('change');
         });
     </script>
 </body>
 </html>''')
 
+    # error.html
     with open('templates/error.html', 'w') as f:
         f.write('''<!DOCTYPE html>
 <html>
@@ -267,4 +241,6 @@ if __name__ == '__main__':
 </body>
 </html>''')
 
-    app.run(host='0.0.0.0', port=5000, debug=True)
+if __name__ == '__main__':
+    create_templates()
+    app.run(host='0.0.0.0', port=5000)
