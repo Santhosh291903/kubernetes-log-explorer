@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 # Initialize Kubernetes client
 def init_kubernetes():
-    kubeconfig_path = "/home/icanio-10155/.kube/config"
+    kubeconfig_path = "/path/path/.kube/config"
     if not os.path.exists(kubeconfig_path):
         raise FileNotFoundError(f"Kubeconfig file not found at {kubeconfig_path}")
     config.load_kube_config(config_file=kubeconfig_path)
